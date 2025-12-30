@@ -6,3 +6,4 @@ class PayrollStates(StatesGroup):
     year = State()
     year_manual = State()
     month = State()
+    result = State()
