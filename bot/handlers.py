@@ -4,8 +4,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
-from aiogram import BaseMiddleware, F, Router
-from aiogram.filters import StateFilter
+from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
@@ -38,31 +37,6 @@ from .texts import (
 LOGGER = logging.getLogger(__name__)
 
 router = Router()
-
-
-class EventLoggingMiddleware(BaseMiddleware):
-    async def __call__(self, handler, event, data):
-        state = data.get("state")
-        state_name = await state.get_state() if state else None
-        if isinstance(event, Message):
-            LOGGER.info(
-                "Event message state=%s text=%r user_id=%s",
-                state_name,
-                event.text,
-                event.from_user.id if event.from_user else None,
-            )
-        elif isinstance(event, CallbackQuery):
-            LOGGER.info(
-                "Event callback state=%s data=%r user_id=%s",
-                state_name,
-                event.data,
-                event.from_user.id if event.from_user else None,
-            )
-        return await handler(event, data)
-
-
-router.message.middleware(EventLoggingMiddleware())
-router.callback_query.middleware(EventLoggingMiddleware())
 
 
 def salary_format(value: int) -> str:
@@ -134,17 +108,17 @@ async def menu_other_month(message: Message, state: FSMContext) -> None:
     await show_year_select(message, state)
 
 
-@router.message(StateFilter(PayrollStates.result), F.text == "📋 Детали по дням")
+@router.message(F.text == "📋 Детали по дням")
 async def menu_details(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    details = data.get("last_details")
+    details = data.get("details")
     if not details:
         await message.answer("Сначала рассчитай месяц.")
         return
     await send_details(message, data)
 
 
-@router.message(StateFilter(PayrollStates.salary))
+@router.message(PayrollStates.salary)
 async def salary_input(message: Message, state: FSMContext) -> None:
     parsed = parse_salary(message.text or "")
     if not parsed:
@@ -158,35 +132,35 @@ async def salary_input(message: Message, state: FSMContext) -> None:
     await show_year_select(message, state)
 
 
-@router.callback_query(StateFilter(PayrollStates.year), F.data.startswith("year:") | F.data.in_({"year_prev", "year_next", "year_manual", "back"}))
+@router.callback_query(F.data.startswith("year:"))
 async def year_callbacks(callback: CallbackQuery, state: FSMContext) -> None:
-    data_value = callback.data
+    action = callback.data.split(":", maxsplit=2)
     data = await state.get_data()
     year_view = int(data.get("year_view", datetime.now().year))
 
-    if data_value == "year_prev":
+    if action[1] == "prev":
         year_view -= 1
         await state.update_data(year_view=year_view)
         await callback.message.edit_text(YEAR_SELECT, reply_markup=year_keyboard(year_view))
-    elif data_value == "year_next":
+    elif action[1] == "next":
         year_view += 1
         await state.update_data(year_view=year_view)
         await callback.message.edit_text(YEAR_SELECT, reply_markup=year_keyboard(year_view))
-    elif data_value.startswith("year:"):
-        year = int(data_value.split(":", maxsplit=1)[1])
+    elif action[1] == "choose" and len(action) == 3:
+        year = int(action[2])
         await state.update_data(year=year)
         await callback.message.edit_text(YEAR_SELECT)
         await show_month_select(callback.message, state)
-    elif data_value == "year_manual":
+    elif action[1] == "manual":
         await state.set_state(PayrollStates.year_manual)
         await callback.message.answer(YEAR_MANUAL_PROMPT, parse_mode="Markdown")
-    elif data_value == "back":
+    elif action[1] == "back":
         await state.clear()
         await show_main_menu(callback.message)
     await callback.answer()
 
 
-@router.message(StateFilter(PayrollStates.year_manual))
+@router.message(PayrollStates.year_manual)
 async def year_manual_input(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     if not text.isdigit():
@@ -200,7 +174,7 @@ async def year_manual_input(message: Message, state: FSMContext) -> None:
     await show_month_select(message, state)
 
 
-@router.callback_query(StateFilter(PayrollStates.month), F.data.startswith("month:"))
+@router.callback_query(F.data.startswith("month:"))
 async def month_selected(
     callback: CallbackQuery,
     state: FSMContext,
@@ -213,18 +187,11 @@ async def month_selected(
         await show_year_select(callback.message, state)
         await callback.answer()
         return
-    await calculate_and_show(
-        callback.message,
-        state,
-        calendar,
-        user_id=callback.from_user.id,
-        year=year,
-        month=month,
-    )
+    await calculate_and_show(callback.message, state, calendar, year=year, month=month)
     await callback.answer()
 
 
-@router.callback_query(StateFilter(PayrollStates.month), F.data == "api:retry")
+@router.callback_query(F.data == "api:retry")
 async def api_retry(
     callback: CallbackQuery,
     state: FSMContext,
@@ -234,18 +201,11 @@ async def api_retry(
     year = data.get("pending_year")
     month = data.get("pending_month")
     if year and month:
-        await calculate_and_show(
-            callback.message,
-            state,
-            calendar,
-            user_id=callback.from_user.id,
-            year=year,
-            month=month,
-        )
+        await calculate_and_show(callback.message, state, calendar, year=year, month=month)
     await callback.answer()
 
 
-@router.callback_query(StateFilter(PayrollStates.month), F.data == "api:back")
+@router.callback_query(F.data == "api:back")
 async def api_back(callback: CallbackQuery, state: FSMContext) -> None:
     await show_month_select(callback.message, state)
     await callback.answer()
@@ -255,13 +215,10 @@ async def calculate_and_show(
     message: Message,
     state: FSMContext,
     calendar: CalendarService,
-    *,
-    user_id: int,
     year: int,
     month: int,
 ) -> None:
-    # callback.message.from_user is the bot; always use the triggering user's id.
-    salary = await get_salary(user_id)
+    salary = await get_salary(message.from_user.id)
     if salary is None:
         await state.set_state(PayrollStates.salary)
         await message.answer(START_NO_SALARY, parse_mode="Markdown")
@@ -275,14 +232,13 @@ async def calculate_and_show(
 
     payroll = build_payroll(year, month, salary, calendar_raw)
     await state.update_data(
-        last_year=year,
-        last_month=month,
-        last_details=[detail.__dict__ for detail in payroll.details],
+        year=year,
+        month=month,
+        details=[detail.__dict__ for detail in payroll.details],
         hours_total=payroll.hours_total,
         hours_1_15=payroll.hours_1_15,
         hours_16_end=payroll.hours_16_end,
     )
-    await state.set_state(PayrollStates.result)
 
     result_text = (
         f"**{payroll.month_name} {year}**\n"
@@ -299,9 +255,9 @@ async def calculate_and_show(
 
 
 async def send_details(message: Message, data: dict) -> None:
-    month = data.get("last_month")
-    year = data.get("last_year")
-    details = data.get("last_details", [])
+    month = data.get("month")
+    year = data.get("year")
+    details = data.get("details", [])
     if not month or not year or not details:
         await message.answer("Сначала рассчитай месяц.")
         return
@@ -329,8 +285,3 @@ async def send_details(message: Message, data: dict) -> None:
 
 def month_name(month: int) -> str:
     return MONTH_NAMES[month - 1]
-
-
-@router.message(StateFilter(None))
-async def fallback_start(message: Message) -> None:
-    await message.answer("Нажми /start, чтобы начать.")
