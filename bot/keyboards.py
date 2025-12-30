@@ -21,12 +21,12 @@ def year_keyboard(year: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="◀️", callback_data="year_prev"),
-                InlineKeyboardButton(text=str(year), callback_data=f"year:{year}"),
-                InlineKeyboardButton(text="▶️", callback_data="year_next"),
+                InlineKeyboardButton(text="◀️", callback_data="year:prev"),
+                InlineKeyboardButton(text=str(year), callback_data=f"year:choose:{year}"),
+                InlineKeyboardButton(text="▶️", callback_data="year:next"),
             ],
-            [InlineKeyboardButton(text="⌨️ Ввести год", callback_data="year_manual")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+            [InlineKeyboardButton(text="⌨️ Ввести год", callback_data="year:manual")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="year:back")],
         ]
     )
 
@@ -35,7 +35,7 @@ def month_keyboard() -> InlineKeyboardMarkup:
     rows = []
     row = []
     for idx, name in enumerate(MONTH_NAMES, start=1):
-        row.append(InlineKeyboardButton(text=name, callback_data=f"month:{idx:02d}"))
+        row.append(InlineKeyboardButton(text=name, callback_data=f"month:{idx}"))
         if len(row) == 4:
             rows.append(row)
             row = []
