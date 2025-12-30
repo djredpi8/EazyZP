@@ -39,11 +39,6 @@ LOGGER = logging.getLogger(__name__)
 router = Router()
 
 
-def calendar_service(message: Message | CallbackQuery) -> CalendarService:
-    bot = message.bot if isinstance(message, Message) else message.message.bot
-    return bot["calendar"]
-
-
 def salary_format(value: int) -> str:
     return format_money(Decimal(value))
 
@@ -180,7 +175,11 @@ async def year_manual_input(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("month:"))
-async def month_selected(callback: CallbackQuery, state: FSMContext) -> None:
+async def month_selected(
+    callback: CallbackQuery,
+    state: FSMContext,
+    calendar: CalendarService,
+) -> None:
     month = int(callback.data.split(":", maxsplit=1)[1])
     data = await state.get_data()
     year = data.get("year")
@@ -188,17 +187,21 @@ async def month_selected(callback: CallbackQuery, state: FSMContext) -> None:
         await show_year_select(callback.message, state)
         await callback.answer()
         return
-    await calculate_and_show(callback.message, state, year=year, month=month)
+    await calculate_and_show(callback.message, state, calendar, year=year, month=month)
     await callback.answer()
 
 
 @router.callback_query(F.data == "api:retry")
-async def api_retry(callback: CallbackQuery, state: FSMContext) -> None:
+async def api_retry(
+    callback: CallbackQuery,
+    state: FSMContext,
+    calendar: CalendarService,
+) -> None:
     data = await state.get_data()
     year = data.get("pending_year")
     month = data.get("pending_month")
     if year and month:
-        await calculate_and_show(callback.message, state, year=year, month=month)
+        await calculate_and_show(callback.message, state, calendar, year=year, month=month)
     await callback.answer()
 
 
@@ -208,15 +211,20 @@ async def api_back(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-async def calculate_and_show(message: Message, state: FSMContext, year: int, month: int) -> None:
+async def calculate_and_show(
+    message: Message,
+    state: FSMContext,
+    calendar: CalendarService,
+    year: int,
+    month: int,
+) -> None:
     salary = await get_salary(message.from_user.id)
     if salary is None:
         await state.set_state(PayrollStates.salary)
         await message.answer(START_NO_SALARY, parse_mode="Markdown")
         return
-    service = calendar_service(message)
     try:
-        calendar_raw = await service.get_month(year, month)
+        calendar_raw = await calendar.get_month(year, month)
     except CalendarError:
         await state.update_data(pending_year=year, pending_month=month)
         await message.answer(API_ERROR, reply_markup=api_error_keyboard())
