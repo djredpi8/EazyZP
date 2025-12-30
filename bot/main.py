@@ -24,7 +24,7 @@ async def main() -> None:
     dp.include_router(router)
 
     calendar = CalendarService()
-    bot["calendar"] = calendar
+    dp.workflow_data["calendar"] = calendar
 
     try:
         await dp.start_polling(bot)
